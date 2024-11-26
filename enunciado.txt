@@ -1,0 +1,171 @@
+Shell: Enunciado vlite.1.0
+Descripción
+La práctica consiste en la realización de un intérprete de comandos (shell)
+simple para el sistema operativo Linux en el lenguaje de programación C.
+El trabajo de dicho programa consiste en leer líneas de la entrada estándar
+y ejecutar los comandos pertinentes. Para leer de la entrada estándar es
+recomendable usar stdio (véase fgets(3)). Nótese que el programa debe
+funcionar correctamente si su entrada estándar procede de un fichero y no
+de un terminal. Para tokenizar cadenas, es recomendable usar strtok_r(3).
+Para solicitar la ejecución del programa comando con un número inde-
+terminado de argumentos arg1 arg2... la línea de comandos tendrá la si-
+guiente sintaxis:
+comando arg1 arg2 ...
+Nótese que podría no haber ningún argumento.
+El comando podrá ser, en este orden de prioridad, un builtin de el shell,
+un fichero ejecutable que se encuentre en el directorio de trabajo o un fichero
+ejecutable que se encuentre en alguno de los directorios de la variable PATH.
+No se permite utilizar system o execvp en la implementación del shell (ni
+nunguna otra versión de exec que inspeccione el PATH automáticamente).
+Una línea de comandos podrá describir en algunos casos un comando
+como en este ejemplo:
+cmd1 arg11...
+
+Dicho comando habrá de ejecutarse creando un proceso independiente.
+Un comando puede tener una indicación de redirección de entrada están-
+dar como se muestra en este ejemplo:
+cmd1 args... < fichero
+que indica que la entrada del comando ha de proceder de fichero.
+Un comando puede tener una indicación de redirección de salida estándar
+con esta sintáxis
+cmd1 args... > fichero
+en cuyo caso la salida estándar del comando tiene como destino fichero.
+El shell deberá esperar a que una línea de comandos termine su ejecución
+antes de leer la siguiente, a no ser que dicha línea termine en &, como en este
+ejemplo:
+cmd1 args... &
+Cuando la línea termina en & el shell no debe esperar a que termine de
+ejecutar dicho comando. Además, no debe permitirse al comando ejecutado
+leer de la entrada del shell. Así pues, en caso de que no se haya redirigido la
+entrada estándar de dicho comando a otro fichero, el shell debe redirigirla a
+/dev/null para evitar que tanto el shell como el comando lean a la vez de
+la entrada (normalmente la consola).
+Un ejemplo de línea de comando que incluye todos los elementos men-
+cionados sería:
+wc < /tmp/fich >/tmp/out &
+El shell debe implementar un comando builtin llamado cd que debe cam-
+biar el directorio actual al indicado como argumento en dicho comando. Si
+no recibe argumentos, cambiará el directorio de trabajo al directorio HOME
+del usuario.
+El shell debe entender el comando
+
+x=y
+que deberá dar el valor y a la variable de entorno x. No puede haber espacios
+entre el igual y el nombre o valor. Para cualquier variable de entorno, el shell
+deberá reemplazar $x por el valor de x. Por ejemplo:
+cmd=ls
+arg=/tmp
+$cmd $arg
+es equivalente a ejecutar el comando
+ls /tmp
+Esta sustitución debe suceder antes del globbing (opcional).
+Si la variable no existe, el shell debe imprimir un mensaje de error infor-
+mativo y no ejecutar la línea de comandos. Por ejemplo (suponiendo que la
+variable de entorno patata no existe):
+echo $patata
+debería dar un error:
+error: var patata does not exist
+Nótese que este no es el comportamiento de bash ni sh como se ha visto en
+clase.
+Entre los caracteres especiales de el shell (redirecciones, etc.) y los co-
+mandos/argumentos podrá haber cero, uno, o más espacios y/o tabuladores
+(si no se ha especificado lo contrario anteriormente). El shell debe funcionar
+correctamente en cualquier caso.
+La shell debe funcionar correctamente cuando se alimenta su entrada
+estándar desde otro proceso o directamente de un fichero, esto es, cuando no
+se está usando de forma interactiva a través de la consola. Dos ejemplos:
+
+cat mi_script | shell
+shell < mi_script
+siendo mi_script un fichero con varias líneas de comandos
+
+Claro, aquí tienes un índice de los pasos que deberías seguir para implementar la parte obligatoria de esta práctica:
+
+1. **Inicialización del Shell**
+   - Configura el entorno inicial del shell.
+   - Implementa un bucle principal que lea líneas de la entrada estándar.
+
+2. **Lectura de Comandos**
+   - Usa `fgets` para leer líneas de la entrada estándar.
+   - Implementa una función para eliminar el carácter de nueva línea (`\n`) al final de la línea leída.
+
+3. **Tokenización de la Línea de Comandos**
+   - Usa `strtok_r` para dividir la línea de comandos en tokens.
+   - Implementa una función que convierta la línea de comandos en un array de argumentos.
+
+4. **Ejecución de Comandos Built-in**
+   - Implementa el comando `cd`.
+   - Implementa el comando para asignar variables de entorno (`x=y`).
+
+5. **Ejecución de Comandos Externos**
+   - Implementa la búsqueda de comandos en el directorio de trabajo y en los directorios de la variable `PATH`.
+   - Usa `fork` y `execve` para ejecutar comandos en procesos hijos.
+
+6. **Redirección de Entrada y Salida**
+   - Implementa la redirección de entrada (`< fichero`).
+   - Implementa la redirección de salida (`> fichero`).
+
+7. **Ejecución en Segundo Plano**
+   - Implementa la ejecución de comandos en segundo plano (`cmd &`).
+   - Redirige la entrada estándar a 
+
+null
+
+ si no se ha especificado otra redirección.
+
+8. **Sustitución de Variables de Entorno**
+   - Implementa la sustitución de variables de entorno (`$x`).
+   - Maneja errores si la variable de entorno no existe.
+
+9. **Manejo de Errores**
+   - Implementa mensajes de error informativos para comandos no encontrados y variables de entorno inexistentes.
+
+10. **Limpieza y Finalización**
+    - Asegúrate de liberar cualquier recurso utilizado.
+    - Implementa una forma de salir del shell (por ejemplo, con el comando `exit`).
+
+Cada uno de estos pasos puede desglosarse en tareas más pequeñas y específicas. A continuación, te detallo el primer paso como ejemplo:
+
+### Paso 1: Inicialización del Shell
+
+1.1. **Configura el entorno inicial del shell**
+   - Crea una función `init_shell` que configure cualquier variable de entorno inicial necesaria.
+
+1.2. **Implementa un bucle principal que lea líneas de la entrada estándar**
+   - Crea una función `main_loop` que contenga un bucle `while` infinito.
+   - Dentro del bucle, usa `fgets` para leer una línea de la entrada estándar.
+   - Llama a una función `process_command` para procesar la línea leída.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+void init_shell() {
+    // Configura el entorno inicial del shell
+}
+
+void process_command(char *line) {
+    // Procesa la línea de comandos
+}
+
+void main_loop() {
+    char line[1024];
+
+    while (1) {
+        printf("> ");
+        if (fgets(line, sizeof(line), stdin) == NULL) {
+            break;
+        }
+        process_command(line);
+    }
+}
+
+int main() {
+    init_shell();
+    main_loop();
+    return 0;
+}
+```
+
+Continúa con los siguientes pasos de manera similar, desglosando cada uno en tareas más pequeñas y específicas.
