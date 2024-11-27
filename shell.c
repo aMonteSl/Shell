@@ -1,3 +1,4 @@
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,7 +16,7 @@ char *read_line() {
     char *line = malloc(MAX_LINE);
     
     do {
-        printf("prompt> ");
+        printf("%s> ", getcwd(NULL, 0));
         fgets(line, MAX_LINE, stdin);
     } while (line[0] == '\n');
 
