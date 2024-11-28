@@ -9,30 +9,24 @@ enum {
     MAX_LINE = 1024,
 };
 
-// Función para iniciar la shell
 void init_shell() {
     const char *home_dir = getenv("HOME");
     if (home_dir == NULL) {
         fprintf(stderr, "Error: HOME environment variable not set.\n");
         exit(EXIT_FAILURE);
     }
-
-    // Cambiar al directorio $HOME
     if (chdir(home_dir) != 0) {
         perror("cd");
         exit(EXIT_FAILURE);
     }
 }
 
-// Función que lee una línea de la entrada estándar
 char *read_line() {
     char *line = malloc(MAX_LINE);
-    
     do {
-        printf("%s> ", getcwd(NULL, 0));
+        printf("%s, %i> ", getcwd(NULL, 0), getpid());
         fgets(line, MAX_LINE, stdin);
     } while (line[0] == '\n');
-
     return line;
 }
 
@@ -53,7 +47,6 @@ char **tokenize(char *line) {
     return tokens;
 }
 
-// Función que comprueba si el comando es el builtin cd
 int builtincd(char **tokens) {
     return strcmp(tokens[0], "cd") == 0;
 }
@@ -68,7 +61,6 @@ void execute_cd(char **tokens) {
     }
 }
 
-// Función que busca el comando en las rutas de PATH
 char *find_command_in_path(char *command) {
     char *path = getenv("PATH");
     if (path == NULL) {
@@ -98,14 +90,34 @@ void handle_redirection(char **tokens, int *input_redirect, char **input_file, i
         if (strcmp(tokens[i], "<") == 0) {
             *input_redirect = 1;
             *input_file = tokens[i + 1];
-            tokens[i] = NULL; // Remove the redirection part from tokens
+            // Eliminar los tokens de redirección
+            int j = i;
+            while (tokens[j + 2] != NULL) {
+                tokens[j] = tokens[j + 2];
+                j++;
+            }
+            tokens[j] = NULL;
+            i--;
         } else if (strcmp(tokens[i], ">") == 0) {
             *output_redirect = 1;
             *output_file = tokens[i + 1];
-            tokens[i] = NULL; // Remove the redirection part from tokens
+            // Eliminar los tokens de redirección
+            int j = i;
+            while (tokens[j + 2] != NULL) {
+                tokens[j] = tokens[j + 2];
+                j++;
+            }
+            tokens[j] = NULL;
+            i--;
         } else if (strcmp(tokens[i], "&") == 0) {
             *background = 1;
-            tokens[i] = NULL; // Remove the background part from tokens
+            // Eliminar el token de ejecución en segundo plano
+            int j = i;
+            while (tokens[j] != NULL) {
+                tokens[j] = tokens[j + 1];
+                j++;
+            }
+            i--;
         }
     }
 }
@@ -156,7 +168,6 @@ void execute_command(char **tokens, int input_redirect, char *input_file, int ou
 
 void execute(char **tokens) {
     int pid;
-    int pid_wait;
     int status;
     int input_redirect = 0;
     int output_redirect = 0;
@@ -167,32 +178,28 @@ void execute(char **tokens) {
     handle_redirection(tokens, &input_redirect, &input_file, &output_redirect, &output_file, &background);
 
     pid = fork();
-    switch (pid) {
-    case -1:
+    if (pid == -1) {
         perror("fork");
         exit(EXIT_FAILURE);
-        break;
-    case 0: 
-        // Proceso hijo
+    } else if (pid == 0) {
         execute_command(tokens, input_redirect, input_file, output_redirect, output_file, background);
-        break;
-    default:
-        // Proceso padre
+    } else {
         if (!background) {
-            pid_wait = wait(&status);
-            if (pid_wait == -1) {
+            if (waitpid(pid, &status, 0) == -1) {
                 perror("wait");
                 exit(EXIT_FAILURE);
             }
+        } else {
+            printf("[Proceso en segundo plano iniciado con PID %d]\n", pid);
         }
-        break;
     }
 }
 
 void check_background_processes() {
     int status;
-    while (waitpid(-1, &status, WNOHANG) > 0) {
-        // Proceso hijo terminado
+    pid_t pid;
+    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+        printf("[Proceso en segundo plano con PID %d terminado]\n", pid);
     }
 }
 
@@ -200,36 +207,28 @@ int main(int argc, char *argv[]) {
     char *line;
     char **tokens;
 
-    // Comando para iniciar la shell (básicamente cambiar al directorio $HOME)
     init_shell();
     printf("Shell iniciada\n");
 
     while (1) {
-        // Verificar si hay procesos en segundo plano que hayan terminado
         check_background_processes();
 
-        // Llamar a función que devolverá el prompt que se ha leído de la entrada estándar
         line = read_line();
-        printf("line: %s", line);
-        // Ahora toca tokenizar la línea leída
         tokens = tokenize(line);
-        for (int i = 0; tokens[i] != NULL; i++) {
-            printf("token[%d]: %s\n", i, tokens[i]);
-        }
-        // Ver si el comando es el builtin cd
+
         if (builtincd(tokens)) {
-            // Llamar a la función que se encargará de cambiar el directorio de trabajo
             execute_cd(tokens);
         } else {
-            // Ejecutar el comando
             execute(tokens);
+        }
+
+        if (strcmp(tokens[0], "exit") == 0) {
+            break;
         }
 
         free(line);
         free(tokens);
-        tokens = NULL;
-        line = NULL;
     }
 
-    return 0;
+    exit(EXIT_SUCCESS);
 }
