@@ -2,67 +2,112 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <errno.h>
+#include <signal.h>
+#include <sys/stat.h>
+#include <glob.h>
 #include <sys/wait.h>
 #include <fcntl.h>
-#include <signal.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <unistd.h>
-#include <glob.h>
 
 enum {
     MAX_LINE = 1024,
 };
 
-void init_shell() {
-    char *home_dir = getenv("HOME");
-    if (home_dir == NULL) {
+// Define struct for the LineToken
+typedef struct LineToken {
+    char *line;
+    char **tokens;
+} LineToken;
+
+// Verify if the standard input is a terminal
+int
+idstdinterminal(void){
+    struct stat statbuf;
+    fstat(STDIN_FILENO, &statbuf);
+    return S_ISCHR(statbuf.st_mode);
+
+}
+
+// Initialize the shell
+void
+initshell(void){
+    printf("Shell 1.0\n");
+
+    // Change to the HOME directory
+    char *homedir = getenv("HOME");
+    if (homedir == NULL) {
         fprintf(stderr, "Error: HOME environment variable not set. Using current directory.\n");
         return;
     }
-    if (chdir(home_dir) != 0) {
-        perror("cd");
+    if (chdir(homedir) != 0) {
+        fprintf(stderr, "Error: Failed to change directory to HOME (%s): %s\n", homedir, strerror(errno));
         fprintf(stderr, "Using current directory as fallback.\n");
     }
-    setenv("result", "0", 1); // Inicializar la variable de entorno result
+
+    // Initialize the RESULT environment variable
+     if (setenv("result", "0", 1) != 0) {
+        perror("setenv");
+     } 
 }
 
-char *read_line() {
-    char line[MAX_LINE] = "";
-    char *pline = NULL;
+// Signal handler for SIGINT
+void 
+sigint_handler(int sig) {
+    printf("\nCaught signal %d (SIGINT). Type 'exit' to quit the shell.\n", sig);
+}
 
-    // Imprimir el prompt como "user@:current_directory$ "
+// Print the prompt
+void
+printpromt(void){
     char *user = getenv("USER");
+    char *current_dir = getcwd(NULL, 0);
 
     if (user == NULL) {
         fprintf(stderr, "Error: USER environment variable not set.\n");
         exit(EXIT_FAILURE);
     }
 
-    char *current_dir = getcwd(NULL, 0);
     if (current_dir == NULL) {
         perror("getcwd");
         exit(EXIT_FAILURE);
     }
 
-    // printf("%s@:%s$ ", user, current_dir);
+    printf("%s@:%s$ ", user, current_dir);
     free(current_dir);
-
-    // Manejar mucho mejor fgets
-    if (fgets(line, MAX_LINE, stdin) == NULL) {
-        return NULL; // Manejo de error o EOF.
-    }
-
-    // // Decir que numero de linea se ha leido y lo que se ha leido
-    // printf("Linea leida: %s\n",line);
-
-
-    pline = strdup(line);
-
-    return pline;
 }
 
-char **tokenize(char *line) {
+// Check for background child processes
+void
+checkbackgroundchilds() {
+    int status;
+    int pid;
+    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+        printf("[Proceso en segundo plano con PID %d terminado]\n", pid);
+    }
+}
+
+
+// Read a line from the standard input
+void
+readline(char** pline, int isterminal){
+    char line[MAX_LINE] = "";
+
+    if (isterminal){
+        printpromt();
+    }
+
+    if (fgets(line, MAX_LINE, stdin) != NULL) {
+        *pline = strdup(line);
+    } else {
+        *pline = NULL;
+    }
+    
+
+}
+
+// Tokenize a line
+char **
+tokenize(char *line) {
     char **tokens = malloc(MAX_LINE * sizeof(char *));
     char *token;
     char *saveptr;
@@ -86,17 +131,93 @@ char **tokenize(char *line) {
     }
     tokens[i] = NULL;
 
-    // No liberamos line aquí porque tokens apunta a partes de line
     return tokens;
 }
 
-int builtincd(char **tokens) {
+// Free memory allocated for LineToken
+void
+freelinetoken(LineToken *lt) {
+    if (lt->line != NULL) {
+        free(lt->line);
+        lt->line = NULL;
+    }
+    if (lt->tokens != NULL) {
+        free(lt->tokens);
+        lt->tokens = NULL;
+    }
+}
+
+// Remove double quotes from the tokens
+void
+removequotes(char **tokens) {
+    int i = 0;
+    while (tokens[i] != NULL) {
+        int len = strlen(tokens[i]);
+        if (tokens[i][0] == '"') {
+            // Move the string one position to the left
+            for (int j = 0; j < len; j++) {
+                tokens[i][j] = tokens[i][j + 1];
+            }
+            len--; // Reduce the length of the string
+        }
+        if (tokens[i][len - 1] == '"') {
+            tokens[i][len - 1] = '\0'; // Remove the last character
+        }
+        i++;
+    }
+}
+
+// Replace environment variables in the tokens
+int
+replaceenvvars(char **tokens) {
+    for (int i = 0; tokens[i] != NULL; i++) {
+        if (tokens[i][0] == '$') {
+            char *env_value = getenv(tokens[i] + 1);
+            if (env_value != NULL) {
+                tokens[i] = env_value;
+            } else {
+                // Print error message and return failure
+                fprintf(stderr, "error: var %s does not exist\n", tokens[i] + 1);
+                return 0;
+            }
+        }
+    }
+    return 1;
+}
+
+// Expand globbing in the tokens
+void expandglobbing(char **tokens) {
+    tokens = tokens;
+}
+
+// Exit command
+int
+exitcommand(char **tokens) {
+    if (strcmp(tokens[0], "exit") == 0) {
+        return 1;
+    }
+    return 0;
+}
+
+// If the command is "cd"
+int
+builtincd(char **tokens) {
     return strcmp(tokens[0], "cd") == 0;
 }
 
-void execute_cd(char **tokens) {
+// Execute the "cd" command
+void 
+changecwd(char **tokens) {
     if (tokens[1] == NULL) {
-        init_shell();
+        // If no arguments move to the HOME directory
+        char *homedir = getenv("HOME");
+        if (homedir == NULL) {
+            fprintf(stderr, "Error: HOME environment variable not set.\n");
+        } else {
+            if (chdir(homedir) != 0) {
+                perror("cd");
+            }
+        }
     } else {
         if (chdir(tokens[1]) != 0) {
             perror("cd");
@@ -104,7 +225,30 @@ void execute_cd(char **tokens) {
     }
 }
 
-int procbackground(char **tokens) {
+// If is an environment variable assignment
+int
+isenvassignment(char **tokens) {
+    return strchr(tokens[0], '=') != NULL;
+}
+
+// Handle environment variable assignment
+void
+handleenvassignment(char **tokens) {
+    char *env_assignment = strdup(tokens[0]); // Duplicate the string to not modify the original
+    char *key = strtok(env_assignment, "=");
+    char *value = strtok(NULL, "=");
+
+    if (key && value) {
+        setenv(key, value, 1); // 1 to overwrite if it already exists
+    } else {
+        fprintf(stderr, "Invalid environment variable assignment: %s\n", tokens[0]);
+    }
+    free(env_assignment); // Free the duplicated memory
+}
+
+// Check if its a process in the background
+int 
+procbackground(char **tokens) {
     // Encuentra el último token.
     char *last_token = tokens[0];
     int i;
@@ -120,7 +264,9 @@ int procbackground(char **tokens) {
     return 0; // Indica que no es un proceso en segundo plano.
 }
 
-void waitchild(int pid) {
+// Wait for a child process
+void
+waitchild(int pid) {
     int pidwait;
     int status;
 
@@ -188,7 +334,8 @@ redirectoutput(char *output_file) {
 
 int
 islocalcommand(char *command) {
-    return strncmp(command, "./", 2) == 0 || strncmp(command, "/", 1) == 0;
+    // Check if the command is a local command (starts with "./")
+    return strncmp(command, "./", 2) == 0;
 }
 
 char *find_command_in_path(char *command) {
@@ -226,107 +373,14 @@ char *find_command_in_path(char *command) {
     return NULL;
 }
 
-int isenvassignment(const char *token) {
-    return strchr(token, '=') != NULL;
-}
-
-int putenv(char *env) {
-    char *env_assignment = strdup(env); // Duplicar la cadena para no modificar el original
-    char *key = strtok(env_assignment, "=");
-    char *value = strtok(NULL, "=");
-
-    if (key && value) {
-        setenv(key, value, 1); // 1 para sobrescribir si ya existe
-    } else {
-        fprintf(stderr, "Invalid environment variable assignment: %s\n", env);
-    }
-    free(env_assignment); // Liberar la memoria duplicada
-    return 0; // No ejecutar más comandos
-}
-
-void handle_env_assignment(char **tokens) {
-    if (isenvassignment(tokens[0])) {
-        // printf("Setting environment variable: %s\n", tokens[0]);
-        putenv(tokens[0]);
-    }
-}
-
-void removedoublequotes(char **tokens) {
-    for (int i = 0; tokens[i] != NULL; i++) {
-        size_t len = strlen(tokens[i]);
-        if (len > 1 && tokens[i][0] == '"' && tokens[i][len - 1] == '"') {
-            // Desplaza el contenido de la cadena hacia la izquierda
-            memmove(tokens[i], tokens[i] + 1, len - 1);
-            // Reemplaza la última comilla con el carácter nulo
-            tokens[i][len - 2] = '\0';
-        }
-    }
-}
-
-void replaceenvvars(char **tokens) {
-    for (int i = 0; tokens[i] != NULL; i++) {
-        if (tokens[i][0] == '$') {
-            char *env_value = getenv(tokens[i] + 1);
-            if (env_value != NULL) {
-                tokens[i] = env_value;
-            } else {
-                // Si no tiene valor, el token se reemplaza por una cadena vacía
-                tokens[i] = "";
-            }
-        }
-    }
-}
-
-char **expand_globbing(char **tokens) {
-    glob_t globbuf;
-    int flags = 0;
-    int i = 0;
-    char **expanded_tokens = NULL;
-
-    for (i = 0; tokens[i] != NULL; i++) {
-        if (i == 0) {
-            flags = GLOB_NOCHECK;
-        } else {
-            flags |= GLOB_APPEND;
-        }
-        glob(tokens[i], flags, NULL, &globbuf);
-    }
-
-    expanded_tokens = malloc((globbuf.gl_pathc + 1) * sizeof(char *));
-    if (expanded_tokens == NULL) {
-        perror("malloc");
-        globfree(&globbuf);
-        return tokens;
-    }
-
-    for (i = 0; i < globbuf.gl_pathc; i++) {
-        expanded_tokens[i] = strdup(globbuf.gl_pathv[i]);
-    }
-    expanded_tokens[globbuf.gl_pathc] = NULL;
-
-    globfree(&globbuf);
-    free(tokens);
-
-    return expanded_tokens;
-}
-
-void free_tokens(char **tokens) {
-    for (int i = 0; tokens[i] != NULL; i++) {
-        free(tokens[i]);
-    }
-    free(tokens);
-}
-
-void executecommand(char **tokens, int background, char *line) {
+void
+executecommand(LineToken *lt, int background) {
     int input_redirect = 0;
     int output_redirect = 0;
     char *input_file = NULL;
     char *output_file = NULL;
 
-    handle_redirection(tokens, &input_redirect, &input_file, &output_redirect, &output_file);
-
-    // Reemplazar las variables de entorno en los tokens
-    // replaceenvvars(tokens);
+    handle_redirection(lt->tokens, &input_redirect, &input_file, &output_redirect, &output_file);
 
     if (input_redirect) {
         redirectinput(input_file);
@@ -338,37 +392,35 @@ void executecommand(char **tokens, int background, char *line) {
         redirectoutput(output_file);
     }
 
-    if (islocalcommand(tokens[0])) {
-        execv(tokens[0], tokens);
+    if (islocalcommand(lt->tokens[0])) {
+        execv(lt->tokens[0], lt->tokens);
     } else {
-        char *command_path = find_command_in_path(tokens[0]);
+        char *command_path = find_command_in_path(lt->tokens[0]);
         if (command_path != NULL) {
-            execv(command_path, tokens);
+            execv(command_path, lt->tokens);
             free(command_path);
+
         } else {
-            fprintf(stderr, "Command not found: %s\n", tokens[0]);
-            free(line);
-            free(tokens);
+            fprintf(stderr, "Command not found: %s\n", lt->tokens[0]);
+            freelinetoken(lt);
+            free(lt);
             exit(EXIT_FAILURE);
         }
     }
     perror("execv");
 
-    // Liberar la memoria duplicada
-    // for (int i = 0; tokens[i] != NULL; i++) {
-    //     if (tokens[i][0] == '$') {
-    //         free(tokens[i]);
-    //     }
-    // }
 
-    free(line); // Liberar memoria antes de salir
-    free(tokens); // Liberar memoria antes de salir
+
+    freelinetoken(lt);
+    free(lt); // Liberar la memoria asignada para lt
     exit(EXIT_FAILURE);
 }
 
-void execute(char **tokens, char *line) {
+// Start a process
+void
+startprocess(LineToken *lt){
     int pidchild;
-    int background = procbackground(tokens);
+    int background = procbackground(lt->tokens);
 
     switch (pidchild = fork()) {
     case -1:
@@ -376,7 +428,9 @@ void execute(char **tokens, char *line) {
         exit(EXIT_FAILURE);
         break;
     case 0:
-        executecommand(tokens, background, line);
+        executecommand(lt, background);
+        freelinetoken(lt);
+        free(lt);
         exit(EXIT_FAILURE);
         break;
     }
@@ -389,176 +443,93 @@ void execute(char **tokens, char *line) {
     }
 }
 
-void checkbackgroundchilds() {
-    int status;
-    int pid;
-    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
-        printf("[Proceso en segundo plano con PID %d terminado]\n", pid);
-    }
-}
+// Main function
+int main(int argc, char* argv[]){
+    LineToken *lt = malloc(sizeof(LineToken));
 
-void sigint_handler(int sig) {
-    printf("\nCaught signal %d (SIGINT). Type 'exit' to quit the shell.\n", sig);
-}
+    int isterminal = idstdinterminal();
 
-int isHERE(char **tokens) {
-    int i;
-    for (i = 0; tokens[i] != NULL; i++) {
-        if (strcmp(tokens[i], "HERE{") == 0) {
-            return 1;
-        }
-    }
-    return 0;
-}
-
-void executeHERE(char **tokens, char *line) {
-    char *heredoc_lines = NULL;
-    size_t heredoc_size = 0;
-    char *heredoc_line = NULL;
-    size_t len = 0;
-
-    printf("HEREDOC> ");
-    while (getline(&heredoc_line, &len, stdin) != -1) {
-        if (strcmp(heredoc_line, "}\n") == 0) {
-            break;
-        }
-        heredoc_size += strlen(heredoc_line);
-        heredoc_lines = realloc(heredoc_lines, heredoc_size + 1);
-        if (heredoc_lines == NULL) {
-            perror("realloc");
-            exit(EXIT_FAILURE);
-        }
-        if (heredoc_size == strlen(heredoc_line)) {
-            heredoc_lines[0] = '\0'; // Inicializar la primera vez
-        }
-        strcat(heredoc_lines, heredoc_line);
-        printf("HEREDOC> ");
-    }
-    free(heredoc_line);
-
-    // Crear pipe
-    int pipefd[2];
-    pipe(pipefd);
-
-    if (fork() == 0) {
-        // Proceso hijo
-        close(pipefd[1]); // Cerrar escritura
-        dup2(pipefd[0], STDIN_FILENO); // Redirigir entrada estándar
-        close(pipefd[0]);
-        // Eliminar HERE{ del comando
-        int i = 0;
-        while (tokens[i] != NULL) {
-            if (strcmp(tokens[i], "HERE{") == 0) {
-                tokens[i] = NULL;
-                break;
-            }
-            i++;
-        }
-        execvp(tokens[0], tokens);
-        perror("execvp");
-        exit(EXIT_FAILURE);
-    } else {
-        // Proceso padre
-        close(pipefd[0]); // Cerrar lectura
-        write(pipefd[1], heredoc_lines, heredoc_size);
-        close(pipefd[1]);
-        wait(NULL);
-    }
-    free(heredoc_lines);
-}
-
-int builtin_ifok(char **tokens) {
-    int result = atoi(getenv("result"));
-    if (result == 0) {
-        execute(tokens, NULL);
-    }
-    return 1;
-}
-
-int builtin_ifnot(char **tokens) {
-    int result = atoi(getenv("result"));
-    if (result != 0) {
-        execute(tokens, NULL);
-    }
-    return 1;
-}
-
-int main(int argc, char *argv[]) {
+    initshell();
     signal(SIGINT, sigint_handler);
-    char **tokens = NULL;
-    char *line = NULL;
-    struct stat statbuf;
 
-    printf("Shell iniciada\n");
-    init_shell();
+    if (lt == NULL) {
+        perror("malloc");
+        exit(EXIT_FAILURE);
+    }
 
-    // Verificar si la entrada estándar es un terminal
-    fstat(STDIN_FILENO, &statbuf);
-    int is_terminal = S_ISCHR(statbuf.st_mode);
+    lt->line = NULL;
+    lt->tokens = NULL;
 
     do {
-        checkbackgroundchilds(); // Verificar procesos en segundo plano
 
-        if (is_terminal) {
-            char *cwd = getcwd(NULL, 0);
-            printf("%s@:%s$ ", getenv("USER"), cwd); // Imprimir el prompt solo si es un terminal
-            free(cwd); // Liberar la memoria asignada por getcwd
-        }
+        checkbackgroundchilds();
 
-        line = read_line();
-        if (line == NULL) {
-            free(line);
-            free(tokens);
+        readline(&lt->line, isterminal);
+        // printf("Linea leida: %s", lt->line);
+
+        if (lt->line == NULL) {
             break;
-        } else if (line[0] == '\n') {
-            free(line);
+        } else if (lt->line[0] == '\n') {
+            freelinetoken(lt);
             continue;
         }
 
-        tokens = tokenize(line);
-        removedoublequotes(tokens);
-        for (int i = 0; tokens[i] != NULL; i++) {
-            printf("Token %d: %s\n", i, tokens[i]);
+        lt->tokens = tokenize(lt->line);
+        if (lt->tokens == NULL) {
+            freelinetoken(lt);
+            exit(EXIT_FAILURE);
         }
-        replaceenvvars(tokens);
 
-        if (tokens == NULL || tokens[0] == NULL) {
-            free(line);
-            free(tokens);
+        // Remove double quotes from the tokens
+        removequotes(lt->tokens);
+
+        // Replace environment variables and check for errors
+        if (!replaceenvvars(lt->tokens)) {
+            freelinetoken(lt);
+            continue; // Skip execution if there is an error
+        }
+
+        if (lt->tokens[0] == NULL || lt->tokens == NULL) {
+            freelinetoken(lt);
             continue;
         }
 
-        // Expandir globbing
-        tokens = expand_globbing(tokens);
+        // Expand globbing HAY QUE HACER ESTO AL FINAL
+        expandglobbing(lt->tokens);
 
-        if (strcmp(tokens[0], "exit") == 0) {
-            free(line);
-            free_tokens(tokens);
+        // Print tokens
+        // for (int i = 0; lt->tokens[i] != NULL; i++) {
+        //     printf("Token %d: %s\n", i, lt->tokens[i]);
+        // }
+
+        // If the command is "exit", exit the shell
+        if (exitcommand(lt->tokens)) {
             break;
         }
 
-        if (builtincd(tokens)) {
-            execute_cd(tokens);
-        } else if (isenvassignment(tokens[0])) {
-            handle_env_assignment(tokens);
-        } else if (isHERE(tokens)) {
-            printf("Ejecutando HERE\n");
-            executeHERE(tokens, line);
-        } else if (strcmp(tokens[0], "ifok") == 0) {
-            builtin_ifok(&tokens[1]);
-        } else if (strcmp(tokens[0], "ifnot") == 0) {
-            builtin_ifnot(&tokens[1]);
+        // Print memory address of tokens and line
+        // printf("Memory address of tokens: %p\n", lt->tokens);
+        // printf("Memory address of line: %p\n", lt->line);
+
+        // Place for the execution of the command
+        
+        // First if its cd make builtincd
+        if (builtincd(lt->tokens)){
+            changecwd(lt->tokens);
+        } else if (isenvassignment(lt->tokens)) {
+            handleenvassignment(lt->tokens);
         } else {
-            execute(tokens, line);
+            startprocess(lt);
         }
 
-        free(line);
-        free_tokens(tokens);
-        line = NULL;
-        tokens = NULL;
+        
 
-    } while(1);
+        freelinetoken(lt);
 
-    printf("Shell finalizada\n");
+    } while (1);
+
+    freelinetoken(lt);
+    free(lt); // Libera la memoria asignada para lt
+
     exit(EXIT_SUCCESS);
 }

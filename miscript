@@ -26,3 +26,5 @@ cat /tmp/resultado.txt
 wc < /tmp/entrada.txt > /tmp/wcresult.txt &
 
 echo "Directorio actual: $PWD"
+
+cat < /tmp/wcresult.txt

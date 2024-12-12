@@ -354,12 +354,7 @@ void executecommand(char **tokens, int background, char *line) {
     }
     perror("execv");
 
-    // Liberar la memoria duplicada
-    // for (int i = 0; tokens[i] != NULL; i++) {
-    //     if (tokens[i][0] == '$') {
-    //         free(tokens[i]);
-    //     }
-    // }
+
 
     free(line); // Liberar memoria antes de salir
     free(tokens); // Liberar memoria antes de salir
@@ -517,9 +512,9 @@ int main(int argc, char *argv[]) {
 
         tokens = tokenize(line);
         removedoublequotes(tokens);
-        for (int i = 0; tokens[i] != NULL; i++) {
-            printf("Token %d: %s\n", i, tokens[i]);
-        }
+        // for (int i = 0; tokens[i] != NULL; i++) {
+        //     printf("Token %d: %s\n", i, tokens[i]);
+        // }
         replaceenvvars(tokens);
 
         if (tokens == NULL || tokens[0] == NULL) {
