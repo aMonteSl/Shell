@@ -19,6 +19,21 @@ typedef struct LineToken {
     char **tokens;
 } LineToken;
 
+// Define struct for the Redirection
+typedef struct Redirection
+{
+    int isinputredirect;
+    int isoutputredirect;
+    char *inputfile;
+    char *outputfile;
+} Redirection;
+
+typedef struct HereDoc {
+    char *lines;
+    int size;
+} HereDoc;
+
+
 // Verify if the standard input is a terminal
 int
 idstdinterminal(void){
@@ -50,9 +65,16 @@ initshell(void){
      } 
 }
 
+// Init LineToken
+void
+initlinetoken(LineToken *lt) {
+    lt->line = NULL;
+    lt->tokens = NULL;
+}
+
 // Signal handler for SIGINT
 void 
-sigint_handler(int sig) {
+siginthandler(int sig) {
     printf("\nCaught signal %d (SIGINT). Type 'exit' to quit the shell.\n", sig);
 }
 
@@ -185,9 +207,58 @@ replaceenvvars(char **tokens) {
     return 1;
 }
 
-// Expand globbing in the tokens
-void expandglobbing(char **tokens) {
-    tokens = tokens;
+// Expand globbing
+void globbing(char ***tokens) {
+    glob_t globbuf;
+    int flags = 0;
+    char **new_tokens = NULL;
+    size_t new_tokens_count = 0;
+
+    for (int i = 0; (*tokens)[i] != NULL; i++) {
+        if (i == 0) {
+            flags = GLOB_NOCHECK;
+        } else {
+            flags |= GLOB_APPEND;
+        }
+        glob((*tokens)[i], flags, NULL, &globbuf);
+    }
+
+    for (int i = 0; i < globbuf.gl_pathc; i++) {
+        new_tokens_count++;
+    }
+
+    new_tokens = malloc((new_tokens_count + 1) * sizeof(char *));
+    if (new_tokens == NULL) {
+        perror("malloc");
+        globfree(&globbuf);
+        return;
+    }
+
+    for (int i = 0; i < globbuf.gl_pathc; i++) {
+        new_tokens[i] = strdup(globbuf.gl_pathv[i]);
+        if (new_tokens[i] == NULL) {
+            perror("strdup");
+            for (int j = 0; j < i; j++) {
+                free(new_tokens[j]);
+            }
+            free(new_tokens);
+            globfree(&globbuf);
+            return;
+        }
+    }
+
+    new_tokens[new_tokens_count] = NULL;
+
+    globfree(&globbuf);
+
+    // Free the old tokens
+    for (int i = 0; (*tokens)[i] != NULL; i++) {
+        free((*tokens)[i]);
+    }
+    free(*tokens);
+
+    // Replace the old tokens with the new tokens
+    *tokens = new_tokens;
 }
 
 // Exit command
@@ -280,7 +351,7 @@ waitchild(int pid) {
             int exit_status = WEXITSTATUS(status);
             char result_str[10];
             snprintf(result_str, sizeof(result_str), "%d", exit_status);
-            setenv("result", result_str, 1); // Actualizar la variable de entorno result
+            setenv("result", result_str, 1);
             if (exit_status != 0) {
                 printf("El proceso hijo terminó con un código de salida distinto de 0: %d\n", exit_status);
             }
@@ -290,21 +361,51 @@ waitchild(int pid) {
     } while (pidwait != pid);
 }
 
-void handle_redirection(char **tokens, int *input_redirect, char **input_file, int *output_redirect, char **output_file) {
-    for (int i = 0; tokens[i] != NULL; i++) {
-        if (strcmp(tokens[i], "<") == 0) {
-            *input_redirect = 1;
-            *input_file = tokens[i + 1];
-            for (int j = i; tokens[j] != NULL; j++) {
-                tokens[j] = tokens[j + 2];
-            }
+// Check if there is any input redirection
+int
+isinputredirect(char *token) {
+    return strcmp(token, "<") == 0;
+}
+
+// Check if there is any output redirection
+int
+isoutputredirect(char *token) {
+    return strcmp(token, ">") == 0;
+}
+
+// Set the redirection values
+void
+setredirection(int *redirectflag, char **file, char *token) {
+    *redirectflag = 1;
+    *file = token;
+}
+
+// Remove redirection tokens from the tokens array
+void removeredirectiontokens(char **tokens, int i) {
+    for (int j = i; tokens[j] != NULL; j++) {
+        tokens[j] = tokens[j + 2];
+    }
+}
+
+void 
+manageredirections(char **tokens, Redirection *redir) {
+    int i;
+
+    for (i = 0; tokens[i] != NULL; i++) {
+        if (isinputredirect(tokens[i])) {
+            // *input_redirect = 1;
+            // *input_file = tokens[i + 1];
+            setredirection(&redir->isinputredirect, &redir->inputfile, tokens[i + 1]);
+            removeredirectiontokens(tokens, i);
             i--;
-        } else if (strcmp(tokens[i], ">") == 0) {
-            *output_redirect = 1;
-            *output_file = tokens[i + 1];
-            for (int j = i; tokens[j] != NULL; j++) {
-                tokens[j] = tokens[j + 2];
-            }
+        } else if (isoutputredirect(tokens[i])) {
+            // *output_redirect = 1;
+            // *output_file = tokens[i + 1];
+            // for (int j = i; tokens[j] != NULL; j++) {
+            //     tokens[j] = tokens[j + 2];
+            // }
+            setredirection(&redir->isoutputredirect, &redir->outputfile, tokens[i + 1]);
+            removeredirectiontokens(tokens, i);
             i--;
         }
     }
@@ -338,7 +439,8 @@ islocalcommand(char *command) {
     return strncmp(command, "./", 2) == 0;
 }
 
-char *find_command_in_path(char *command) {
+char*
+findcommandinpath(char *command) {
     char *path = getenv("PATH");
     if (path == NULL) {
         return NULL;
@@ -374,45 +476,179 @@ char *find_command_in_path(char *command) {
 }
 
 void
-executecommand(LineToken *lt, int background) {
-    int input_redirect = 0;
-    int output_redirect = 0;
-    char *input_file = NULL;
-    char *output_file = NULL;
+initredirect(Redirection *redir) {
+    redir->isinputredirect = 0;
+    redir->isoutputredirect = 0;
+    redir->inputfile = NULL;
+    redir->outputfile = NULL;
+}
 
-    handle_redirection(lt->tokens, &input_redirect, &input_file, &output_redirect, &output_file);
+// Remove "./" from the command of the first token
+void
+removedotslash(char *token) {
+    int len = strlen(token);
+    for (int i = 0; i < len - 1; i++) {
+        token[i] = token[i + 2];
+    }
+    token[len - 2] = '\0';
+}
 
-    if (input_redirect) {
-        redirectinput(input_file);
-    } else if (background) {
-        redirectinput("/dev/null");
+void
+freeall(LineToken *lt, Redirection *redir, HereDoc *heredoc) {
+    freelinetoken(lt);
+    free(lt);
+    free(redir);
+    free(heredoc);
+}
+
+int 
+ishere(char **tokens) {
+    int i;
+    for (i = 0; tokens[i] != NULL; i++) {
+        if (strcmp(tokens[i], "HERE{") == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int
+noredirects(Redirection *redir) {
+    return !redir->isinputredirect && !redir->isoutputredirect;
+}
+
+// Read the lines of the HERE command until we find a }
+void
+readheredoc(HereDoc *heredoc){
+    heredoc->lines = NULL;
+    heredoc->size = 0;
+
+    char heredoc_line[MAX_LINE];
+    size_t len;
+
+    printf("HEREDOC> ");
+    while (fgets(heredoc_line, sizeof(heredoc_line), stdin) != NULL) {
+        if (strcmp(heredoc_line, "}\n") == 0) {
+            break;
+        }
+        len = strlen(heredoc_line);
+        heredoc->size += len;
+        heredoc->lines = realloc(heredoc->lines, heredoc->size + 1);
+        if (heredoc->lines == NULL) {
+            perror("realloc");
+            exit(EXIT_FAILURE);
+        }
+        if (heredoc->size == len) {
+            heredoc->lines[0] = '\0'; // Inicializar la primera vez
+        }
+        strcat(heredoc->lines, heredoc_line);
+        printf("HEREDOC> ");
+    }
+    
+}
+
+// Create pipes to redirect de heredoc to the command
+void
+redirectheredoc(HereDoc *heredoc) {
+    // Is not neccesary to create a new child process
+    int pipefd[2];
+    if (pipe(pipefd) == -1) {
+        perror("pipe");
+        exit(EXIT_FAILURE);
     }
 
-    if (output_redirect) {
-        redirectoutput(output_file);
+    if (write(pipefd[1], heredoc->lines, heredoc->size) == -1) {
+        perror("write");
+        exit(EXIT_FAILURE);
+    }
+
+    close(pipefd[1]);
+    dup2(pipefd[0], STDIN_FILENO);
+    close(pipefd[0]);
+
+    free(heredoc->lines);
+
+}
+
+void erasetoken(char **tokens, char* token) {
+    int i = 0;
+    while (tokens[i] != NULL) {
+        if (strcmp(tokens[i], token) == 0) {
+            // Move tokens to the left
+            for (int j = i; tokens[j] != NULL; j++) {
+                tokens[j] = tokens[j + 1];
+            }
+            break;
+        }
+        i++;
+    }
+}
+
+void
+executecommand(LineToken *lt, int background) {
+    Redirection *redir = malloc(sizeof(Redirection));
+    HereDoc *heredoc = malloc(sizeof(HereDoc));
+    char *commandpath;
+
+    if (redir == NULL) {
+        perror("malloc");
+        freelinetoken(lt);
+        free(lt);
+        exit(EXIT_FAILURE);
+    }
+
+    initredirect(redir);
+
+    manageredirections(lt->tokens, redir);
+
+    if (redir->isinputredirect) {
+        redirectinput(redir->inputfile);
+    } else if (background) {
+        // printf("Redirigiendo la entrada a /dev/null\n");
+        redirectinput("/dev/null");
+    
+    }
+
+    if (redir->isoutputredirect) {
+        redirectoutput(redir->outputfile);
+    }
+
+    if (ishere(lt->tokens) && noredirects(redir)) {
+        // printf("SERA HERE\n");
+        // Primero leer las líneas de HERE hasta que encontremos un }
+        readheredoc(heredoc);
+        // Create pipe to redirect the heredoc to the command
+        redirectheredoc(heredoc);
+        // Remove the HERE command from the tokens
+        erasetoken(lt->tokens, "HERE{");
+        
     }
 
     if (islocalcommand(lt->tokens[0])) {
-        execv(lt->tokens[0], lt->tokens);
+        // printf("Is a local command\n");
+        commandpath = strdup(lt->tokens[0]);
+        if (commandpath == NULL) {
+            perror("strdup");
+            freeall(lt, redir, heredoc);
+            exit(EXIT_FAILURE);
+        }
+        removedotslash(lt->tokens[0]);
     } else {
-        char *command_path = find_command_in_path(lt->tokens[0]);
-        if (command_path != NULL) {
-            execv(command_path, lt->tokens);
-            free(command_path);
-
-        } else {
+        commandpath = findcommandinpath(lt->tokens[0]);
+        // printf("Command path: %s\n", commandpath);
+        if (commandpath == NULL) {
             fprintf(stderr, "Command not found: %s\n", lt->tokens[0]);
-            freelinetoken(lt);
-            free(lt);
+            freeall(lt, redir, heredoc);
             exit(EXIT_FAILURE);
         }
     }
+
+    execv(commandpath, lt->tokens);
+
     perror("execv");
 
-
-
-    freelinetoken(lt);
-    free(lt); // Liberar la memoria asignada para lt
+    free(commandpath);
+    freeall(lt, redir, heredoc);
     exit(EXIT_FAILURE);
 }
 
@@ -443,22 +679,52 @@ startprocess(LineToken *lt){
     }
 }
 
+int
+isifok(char **tokens) {
+    return strcmp(tokens[0], "ifok") == 0;
+}
+
+int
+exitwitherror(char **tokens) {
+    int correct = atoi(getenv("result"));
+    if (correct != 0) {
+        return 1;
+    }
+    return 0;
+}
+
+int
+isifnot(char **tokens) {
+    return strcmp(tokens[0], "ifnot") == 0;
+}
+
+int
+exitwithsuccess(char **tokens) {
+    int correct = atoi(getenv("result"));
+    if (correct == 0) {
+        return 1;
+    }
+    return 0;
+}
+
+
+
 // Main function
-int main(int argc, char* argv[]){
+int
+main(int argc, char* argv[]){
     LineToken *lt = malloc(sizeof(LineToken));
 
     int isterminal = idstdinterminal();
 
     initshell();
-    signal(SIGINT, sigint_handler);
+    signal(SIGINT, siginthandler);
 
     if (lt == NULL) {
         perror("malloc");
         exit(EXIT_FAILURE);
     }
 
-    lt->line = NULL;
-    lt->tokens = NULL;
+    initlinetoken(lt);
 
     do {
 
@@ -495,7 +761,7 @@ int main(int argc, char* argv[]){
         }
 
         // Expand globbing HAY QUE HACER ESTO AL FINAL
-        expandglobbing(lt->tokens);
+        globbing(&lt->tokens);
 
         // Print tokens
         // for (int i = 0; lt->tokens[i] != NULL; i++) {
@@ -512,6 +778,32 @@ int main(int argc, char* argv[]){
         // printf("Memory address of line: %p\n", lt->line);
 
         // Place for the execution of the command
+
+        
+        if (isifok(lt->tokens)) {
+            // if the exit has been with failure skip the next command
+            if (exitwitherror(&lt->tokens[1])) {
+                printf("Skipping next command\n");
+                freelinetoken(lt);
+                continue;
+            } else {
+                erasetoken(lt->tokens, "ifok");
+            }
+        } else if (isifnot(lt->tokens)) {
+            // if the exit has been with success skip the next command
+            if (exitwithsuccess(&lt->tokens[1])) {
+                printf("Skipping next command\n");
+                freelinetoken(lt);
+                continue;
+            } else {
+                erasetoken(lt->tokens, "ifnot");
+            }
+        }
+
+        for (int i = 0; lt->tokens[i] != NULL; i++) {
+            printf("Token %d: %s\n", i, lt->tokens[i]);
+        }
+        
         
         // First if its cd make builtincd
         if (builtincd(lt->tokens)){
@@ -521,8 +813,6 @@ int main(int argc, char* argv[]){
         } else {
             startprocess(lt);
         }
-
-        
 
         freelinetoken(lt);
 

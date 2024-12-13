@@ -27,4 +27,4 @@ wc < /tmp/entrada.txt > /tmp/wcresult.txt &
 
 echo "Directorio actual: $PWD"
 
-cat < /tmp/wcresult.txt
+cat < wcresult.txt
