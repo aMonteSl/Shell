@@ -1,6 +1,13 @@
+clear
+
 VAR1=hello
-echo $VAR1
+ifok echo $VAR1
 echo $VAR2
+ifnot VAR2=world
+ifok echo Ahora si la variable VAR2 tiene valor
+ifok echo $VAR2
+ifok echo $VAR1 $VAR2
+
 
 cd /tmp
 pwd
@@ -15,7 +22,7 @@ cat /tmp/salida.txt
 echo "Esto es una prueba de redirección de entrada" > /tmp/entrada.txt
 cat < /tmp/entrada.txt
 
-sleep 5 &
+sleep 0.00000000000000000000000000001 &
 echo "Proceso en segundo plano iniciado"
 
 ls -l
@@ -27,4 +34,12 @@ wc < /tmp/entrada.txt > /tmp/wcresult.txt &
 
 echo "Directorio actual: $PWD"
 
-cat < wcresult.txt
+cat < /tmp/wcresult.txt
+
+sort -n /tmp/x/numeros.txt
+
+echo "Ordenando números"
+
+sort -n < /tmp/x/numeros.txt > /tmp/x/numeros_ordenados.txt
+
+cat /tmp/x/numeros_ordenados.txt

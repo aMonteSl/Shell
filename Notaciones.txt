@@ -1,0 +1,6 @@
+Adrian shell2.0.c es en sucio, ahoa en ese codigo esta shell.c en limpio (funciones nuevas para no repetir codigo y codigo ordenado)
+ pero sin limipar el startprocess, es un backup en caso de que algo pase
+Tienes qeu limpiar comentarios y cosas comentadas en shell.c antes del examen
+Tambien he cambiado el changereuslt para que en algunos casos qeu antes no se ejecutaba se ejecutara
+
+SHEll.c DIRIA QUE FUNCIONA YA PERDECTO; LO DOY POR ACABADO
