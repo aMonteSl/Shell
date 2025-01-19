@@ -879,37 +879,115 @@ readheredoc(HereDoc *heredoc){
 }
 
 
-void
-redirectheredoc(HereDoc *heredoc) {
-    int pipefd[2];
+// void
+// redirectheredoc(HereDoc *heredoc) {
+//     int pipefd[2];
     
-    if (pipe(pipefd) == -1) {
-        perror("pipe");
+//     if (pipe(pipefd) == -1) {
+//         perror("pipe");
+//         exit(EXIT_FAILURE);
+//     }
+
+//     if (write(pipefd[1], heredoc->lines, heredoc->size) == -1) {
+//         perror("write");
+//         exit(EXIT_FAILURE);
+//     }
+
+//     close(pipefd[1]);
+//     dup2(pipefd[0], STDIN_FILENO);
+//     close(pipefd[0]);
+
+//     free(heredoc->lines);
+
+// }
+
+void
+fusetokens(LineToken *lt, HereDoc *Heredoc){
+    int i;
+    int j;
+    int k;
+    int len;
+    char **new_tokens;
+    char **heredoc_tokens;
+
+    for (i = 0; lt->tokens[i] != NULL; i++) {
+        if (strcmp(lt->tokens[i], "HERE{") == 0) {
+            break;
+        }
+    }
+
+    len = i;
+    new_tokens = malloc((len + Heredoc->size + 1) * sizeof(char *));
+    if (new_tokens == NULL) {
+        perror("malloc");
         exit(EXIT_FAILURE);
     }
 
-    if (write(pipefd[1], heredoc->lines, heredoc->size) == -1) {
-        perror("write");
+    for (j = 0; j < len; j++) {
+        new_tokens[j] = strdup(lt->tokens[j]);
+        if (new_tokens[j] == NULL) {
+            perror("strdup");
+            for (k = 0; k < j; k++) {
+                free(new_tokens[k]);
+            }
+            free(new_tokens);
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    heredoc_tokens = tokenize(Heredoc->lines);
+    if (heredoc_tokens == NULL) {
+        for (j = 0; j < len; j++) {
+            free(new_tokens[j]);
+        }
+        free(new_tokens);
         exit(EXIT_FAILURE);
     }
 
-    close(pipefd[1]);
-    dup2(pipefd[0], STDIN_FILENO);
-    close(pipefd[0]);
+    for (j = 0; heredoc_tokens[j] != NULL; j++) {
+        new_tokens[i + j] = strdup(heredoc_tokens[j]);
+        if (new_tokens[i + j] == NULL) {
+            perror("strdup");
+            for (k = 0; k < i + j; k++) {
+                free(new_tokens[k]);
+            }
+            free(new_tokens);
+            freetokens(&heredoc_tokens);
+            exit(EXIT_FAILURE);
+        }
+    }
 
-    free(heredoc->lines);
+    new_tokens[i + j] = NULL;
 
+    freetokens(&lt->tokens);
+    lt->tokens = new_tokens;
+    freetokens(&heredoc_tokens);
 }
 
 void
 manageheredoc(LineToken *lt, HereDoc *heredoc) {
     readheredoc(heredoc);
-    redirectheredoc(heredoc);
+    // redirectheredoc(heredoc);
     erasetoken(lt->tokens, "HERE{");
+    fusetokens(lt, heredoc);
+    // Imprimir los tokens
+    for (int i = 0; lt->tokens[i] != NULL; i++) {
+        printf("Token[%d]: %s\n", i, lt->tokens[i]);
+    }
     // Imprimir el contenido del heredoc
     printf("Content of heredoc:\n");
     printf("%s\n", heredoc->lines);
-    printf("Size: %d\n", heredoc->size);
+    // Tengo que hacer tokens las lineas de heredoc
+    // Y fusionarlas con los tokens de lt
+    // Asi ya tengo todo listo para que luego pase el execv en otra parte del programa
+
+    
+
+
+    // Quiero que se imprima aqui lo qeu hay en la entrada estandar 
+    // read(STDIN_FILENO, lt->line, MAX_LINE);
+    // printf("line: %s\n", lt->line);
+    // lt->tokens = tokenize(lt->line);
 }
 
 void handleredirections(LineToken *lt, Redirection *redir, HereDoc *heredoc ,int background) {
@@ -925,6 +1003,7 @@ void handleredirections(LineToken *lt, Redirection *redir, HereDoc *heredoc ,int
     if (herecommand(lt->tokens, redir)) {
         printf(" IS HERE{\n");
         manageheredoc(lt, heredoc);
+        printf("Esta es mi linea: %s\n", lt->line);
     } else
     {
         printf("NO HERE{\n");
@@ -1029,6 +1108,12 @@ executecommand(char *commandpath, LineToken *lt, Redirection *redir, HereDoc *he
     if (commandpath == NULL) {
         freeall(lt, redir, heredoc);
         exit(EXIT_FAILURE);
+    }
+
+    // Imprimir el path y los tokens
+    printf("Path: %s\n", commandpath);
+    for (int i = 0; lt->tokens[i] != NULL; i++) {
+        printf("Token[%d]: %s\n", i, lt->tokens[i]);
     }
 
 

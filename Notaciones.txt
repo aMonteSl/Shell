@@ -4,3 +4,7 @@ Tienes qeu limpiar comentarios y cosas comentadas en shell.c antes del examen
 Tambien he cambiado el changereuslt para que en algunos casos qeu antes no se ejecutaba se ejecutara
 
 SHEll.c DIRIA QUE FUNCIONA YA PERDECTO; LO DOY POR ACABADO
+
+19/01/25
+HERE DOC FUNCIONA BIEN
+TODO BIEN ANTES DEL EXAMEN (sin pasar indent.sh para el estilo), la shell es shell.c, el resto es soporte
